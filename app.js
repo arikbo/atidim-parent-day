@@ -125,7 +125,7 @@ async function adminView(){
  el('addTeacher').onclick=async()=>{let name=el('newTeacherName').value.trim();if(!name)return;let id=safeId(name);await setDoc(doc(db,'teacherCatalog',id),{name});await loadCatalog();await adminView()};
  el('parseXlsx').onclick=async()=>{try{status('קורא את האקסל...');staged=await parseExcel(el('xlsxFile').files[0]);stagedType='discipline';previewImport()}catch(e){status(formatError(e),true)}};
  el('parsePdf').onclick=async()=>{try{status('קורא את ה-PDF...');staged=await parsePdf(el('pdfFile').files[0]);stagedType='roster';previewImport()}catch(e){status(formatError(e),true)}};
- el('approveImportCheck').onchange=()=>{el('confirmImport').disabled=!el('approveImportCheck').checked||!staged.some(x=>x.id&&!x.error)};
+ el('approveImportCheck').onchange=()=>{el('confirmImport').disabled=!el('approveImportCheck').checked||!staged.length||staged.some(x=>!x.id||x.error||!x.entries?.length)};
  el('confirmImport').onclick=importConfirmed;
 }
 function cleanedClass(v){const s=String(v||'').replace(/[\s'׳"״]/g,'');const m=s.match(/([זחט])(\d+)/);return m?m[1]+m[2]:s}
@@ -146,21 +146,22 @@ const SUBJECTS=['אסטרטגיות במתמטיקה','אסטרטגיות למי
 const SUPPORTS=['שילוב','קשת','פרטני','תגבור','ממריאות','CBT','אסטרטגיות למידה'];
 function parseTimetableText(txt){
  const lines=txt.split(/\n/).map(x=>x.trim()).filter(Boolean);
- const first=lines.find(x=>x.includes('מערכת שעות לתלמיד'))||'';
- // Smart timetable PDFs often extract RTL punctuation in visual order:
- // e.g. "(5 'מערכת שעות לתלמיד/ה: NAME )ז" instead of "NAME (ז' 5)".
+ const first=lines.find(x=>/מערכת\s*שעות\s*לתלמיד/.test(x))||'';
  const flat=first.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,'').replace(/\s+/g,' ').trim();
- const title=flat.match(/מערכת\s*שעות\s*לתלמיד\s*\/\s*ה\s*:?\s*(.*)/);
- if(!title)return {error:'כותרת מערכת אישית לא נמצאה',first};
- const after=title[1];
- const gradeAfter=after.match(/[()\s]*([זחט])\s*['׳״"()\s]*(\d{1,2})/);
- const gradeLetterAtEnd=after.match(/[()\s]*([זחט])\s*[()\s]*$/);
- const gradeBefore=flat.split('מערכת')[0].match(/(?:^|[('׳"\s])(\d{1,2})\s*['׳"()\s]*$/);
- const gradeDigitAtEnd=after.match(/[()\s]*(\d{1,2})\s*['׳״"()\s]*$/);
- const grade=gradeAfter?.[1]||gradeLetterAtEnd?.[1];
- const number=gradeAfter?.[2]||gradeDigitAtEnd?.[1]||gradeBefore?.[1];
- const namePart=after.replace(/\s*[()]\s*[זחט]\s*['׳״"()\s]*\d{0,2}\s*[()]*$/,'').replace(/\s+[זחט]\s*['׳״"()\s]*\d{1,2}\s*[()]*$/,'');
- const name=cleanedName(namePart),cl=grade&&number?grade+number:'';
+ // Smart prints the class as "(5 'מערכת שעות לתלמיד/ה: NAME )ז".
+ // Extract number from the short PREFIX, letter from the SUFFIX; do not
+ // mistake room numbers elsewhere in the timetable for a class.
+ const marker=flat.match(/מערכת\s*שעות\s*לתלמיד\s*\/\s*ה\s*:?/);
+ if(!marker)return {error:'כותרת מערכת אישית לא נמצאה',first};
+ const before=flat.slice(0,marker.index);
+ const after=flat.slice(marker.index+marker[0].length).trim();
+ const visual=after.match(/^(.+?)\s*[)]\s*([זחט])(?:\s*['׳״")]|\s|$)/);
+ const normal=after.match(/^(.+?)\s*[([]\s*([זחט])\s*['׳״"\s]*(\d{1,2})\s*[)\]]?/);
+ const numBefore=before.match(/\d{1,2}/);
+ const name=cleanedName(visual?.[1]||normal?.[1]||'');
+ const grade=visual?.[2]||normal?.[2];
+ const classNumber=normal?.[3]||numBefore?.[0];
+ const cl=grade&&classNumber?grade+classNumber:'';
  if(!name||!cl)return {error:'כותרת תלמיד זוהתה אך שם/כיתה לא פוענחו',first};
  const entries=[],supports=[];
  for(let i=0;i<lines.length;i++){
@@ -210,7 +211,7 @@ function previewImport(){const host=el('importView');let valid=staged.filter(x=>
  status('הקובץ נקרא; הייבוא לא בוצע עדיין.');
 }
 async function commitChunks(operations){for(let i=0;i<operations.length;i+=350){const batch=writeBatch(db);for(let op of operations.slice(i,i+350)){batch.set(doc(db,op.col,op.id),op.data,{merge:op.merge??false})}await batch.commit();}}
-async function importConfirmed(){if(!staged.length||!el('approveImportCheck')?.checked)return;
+async function importConfirmed(){if(!staged.length||!el('approveImportCheck')?.checked||staged.some(x=>!x.id||x.error||(stagedType==='roster'&&!x.entries?.length)))return;
  if(!confirm(`לייבא ${staged.length} רשומות? הפעולה תעדכן מידע קיים עם אותם מזהים. יש לוודא שהנתונים מדויקים.`))return;
  el('confirmImport').disabled=true;
  try{
