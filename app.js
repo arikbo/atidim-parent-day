@@ -114,7 +114,7 @@ async function adminView(){
  const options=catalog.map(x=>({value:x.id,label:x.name}));
  el('view').innerHTML=`<section class="panel"><h2>בקשות הצטרפות <span class="pill">${pending.length}</span></h2><p class="muted">אין לשייך חשבון לשם המורה ללא זיהוי עצמאי. אפשר לאשר כמה חשבונות שונים לאותו מורה.</p><div class="tablewrap"><table><thead><tr><th>שם מבוקש</th><th>חשבון Google מאומת</th><th>שיוך מורה</th><th>תפקיד והרשאות</th><th>פעולה</th></tr></thead><tbody>${pending.map(p=>`<tr><td>${esc(catalog.find(c=>c.id===p.requestedTeacherName)?.name||p.requestedTeacherName)}</td><td dir="ltr">${esc(p.email)}</td><td><select id="teacher-${p.id}">${opts(options)}</select></td><td><select id="role-${p.id}"><option value="teacher">מורה</option><option value="homeroom">מחנך</option><option value="coordinator">רכז שכבה</option><option value="admin">מנהל מערכת</option></select><input id="scope-${p.id}" placeholder="כיתות למחנך: ז5,ח2 / שכבות לרכז: ז,ח"/></td><td><button data-approve="${p.id}">אישור</button></td></tr>`).join('')||'<tr><td colspan="5">אין בקשות ממתינות</td></tr>'}</tbody></table></div><div id="approvalStatus"></div></section>
  <section class="panel"><h2>חשבונות שכבר אושרו</h2><div class="tablewrap"><table><thead><tr><th>כתובת Google</th><th>שם מורה</th><th>תפקיד</th></tr></thead><tbody>${people.filter(p=>p.status==='approved').map(p=>`<tr><td dir="ltr">${esc(p.email)}</td><td>${esc(catalog.find(c=>c.id===p.teacherId)?.name||p.teacherId)}</td><td>${esc(p.role)}</td></tr>`).join('')}</tbody></table></div></section>
- <section class="panel"><h2>ייבוא מקובצי סמארט</h2><p class="muted">הקבצים נקראים במכשיר שלך. נשלח למסד הנתונים רק מידע שתאשר לאחר תצוגה מקדימה. מומלץ להתחיל בכיתה אחת.</p><div class="grid"><div>${field('מערכות אישיות – PDF','pdfFile','<input type="file" id="pdfFile" accept=".pdf,application/pdf">')}<button class="secondary" id="parsePdf">קריאת PDF</button></div><div>${field('אירועי משמעת – Excel','xlsxFile','<input type="file" id="xlsxFile" accept=".xlsx,.xls">')}<button class="secondary" id="parseXlsx">קריאת Excel</button></div></div><div id="importView" class="notice">בחר קובץ כדי להציג נתונים לפני ייבוא. אין ייבוא אוטומטי ללא אישור.</div><div class="actions"><button id="confirmImport" disabled>אישור וייבוא נתונים שנבדקו</button></div><div id="status"></div></section>
+ <section class="panel"><h2>בדיקת קובצי סמארט ללא שמירה</h2><p class="muted">הקובץ נקרא במכשיר שלך בלבד. לחיצה על "קריאת PDF" או "קריאת Excel" לא שומרת שום נתון בענן. אל תאשר ייבוא עד שתבדוק את הזיהוי.</p><div class="grid"><div>${field('מערכות אישיות – PDF','pdfFile','<input type="file" id="pdfFile" accept=".pdf,application/pdf">')}<button class="secondary" id="parsePdf">קריאת PDF</button></div><div>${field('אירועי משמעת – Excel','xlsxFile','<input type="file" id="xlsxFile" accept=".xlsx,.xls">')}<button class="secondary" id="parseXlsx">קריאת Excel</button></div></div><div id="importView" class="notice">בחר קובץ ולחץ על קריאה לבדיקת תוצאות, ללא שמירה במסד.</div><div class="actions"><label><input type="checkbox" id="approveImportCheck"> בדקתי ידנית את שמות התלמידים, הכיתות, המקצועות והמורים ואני מאשר/ת שמירה בענן</label></div><div class="actions"><button id="confirmImport" disabled>ייבוא למסד הנתונים (פעולה נפרדת)</button></div><div id="status"></div></section>
  <section class="panel"><h2>ניהול רשימת מורים</h2><p class="muted">המערכת יוצרת שמות מורים אוטומטית בעת אישור ייבוא PDF. ניתן להוסיף שם ידנית לצורך בדיקות.</p><div class="flex"><input id="newTeacherName" placeholder="שם מורה מלא"><button id="addTeacher">הוספת מורה</button></div><p class="muted">שמות מורים במערכת: ${catalog.length}</p></section>`;
  for(let p of pending){el(`teacher-${p.id}`).value=catalog.some(x=>x.id===p.requestedTeacherName)?p.requestedTeacherName:'';}
  document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=async()=>{
@@ -125,6 +125,7 @@ async function adminView(){
  el('addTeacher').onclick=async()=>{let name=el('newTeacherName').value.trim();if(!name)return;let id=safeId(name);await setDoc(doc(db,'teacherCatalog',id),{name});await loadCatalog();await adminView()};
  el('parseXlsx').onclick=async()=>{try{status('קורא את האקסל...');staged=await parseExcel(el('xlsxFile').files[0]);stagedType='discipline';previewImport()}catch(e){status(formatError(e),true)}};
  el('parsePdf').onclick=async()=>{try{status('קורא את ה-PDF...');staged=await parsePdf(el('pdfFile').files[0]);stagedType='roster';previewImport()}catch(e){status(formatError(e),true)}};
+ el('approveImportCheck').onchange=()=>{el('confirmImport').disabled=!el('approveImportCheck').checked||!staged.some(x=>x.id&&!x.error)};
  el('confirmImport').onclick=importConfirmed;
 }
 function cleanedClass(v){const s=String(v||'').replace(/[\s'׳"״]/g,'');const m=s.match(/([זחט])(\d+)/);return m?m[1]+m[2]:s}
@@ -177,25 +178,39 @@ function parseTimetableText(txt){
 }
 async function parsePdf(file){if(!file)throw Error('יש לבחור קובץ PDF');const pdfjs=await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');pdfjs.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
  const pdf=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
- const out=[];for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n);const c=await page.getTextContent();const lines=[];let lastY=null,line=[];
- // PDF.js exports individual text chunks; group by approximate Y position, reading in original stream order.
- for(const item of c.items){let y=Math.round(item.transform?.[5]||0);if(lastY!==null&&Math.abs(y-lastY)>2&&line.length){lines.push(line.join(' '));line=[]}line.push(item.str);lastY=y}if(line.length)lines.push(line.join(' '));
- let result=parseTimetableText(lines.join('\n'));
- if(result.error){result=parseTimetableText(c.items.map(i=>i.str).join('\n'))}
- out.push({...result,page:n});}
- if(!out.some(x=>x.id)){const example=out[0]?.first||'ללא כותרת';throw Error('לא זוהו שמות וכיתות מתוך ה-PDF. דוגמת כותרת: '+example.slice(0,120));}return out;
+ const out=[];
+ for(let n=1;n<=pdf.numPages;n++){
+  const page=await pdf.getPage(n), c=await page.getTextContent();
+  // Read text in original PDF stream order. Joining chunks by Y incorrectly merges
+  // six parallel timetable columns into one line and breaks subject/teacher pairing.
+  const chunks=c.items.filter(i=>typeof i.str==='string').map(i=>i.str);
+  let result=parseTimetableText(chunks.join('\n'));
+  // Some PDF generators split the heading into several chunks: stitch the top band.
+  if(result.error){
+   const height=page.getViewport({scale:1}).height;
+   const titleChunks=c.items.filter(i=>typeof i.str==='string' && (i.transform?.[5]||0)>height-95).map(i=>i.str);
+   const title=titleChunks.join(' ').replace(/\s+/g,' ');
+   if(title.includes('מערכת שעות לתלמיד')){
+    result=parseTimetableText([title,...chunks].join('\n'));
+   }
+  }
+  // Never infer a student identity from the filename or page number.
+  out.push({...result,page:n});
+ }
+ if(!out.some(x=>x.id)){const example=out[0]?.first||'ללא כותרת';throw Error('לא זוהו שמות וכיתות מתוך ה-PDF. דוגמת כותרת: '+example.slice(0,120));}
+ return out;
 }
-function previewImport(){const host=el('importView');let valid=staged.filter(x=>x.id&&!x.error);el('confirmImport').disabled=!valid.length;
+function previewImport(){const host=el('importView');let valid=staged.filter(x=>x.id&&!x.error);el('approveImportCheck').checked=false;el('confirmImport').disabled=true;
  if(stagedType==='discipline'){
  host.innerHTML=`<b>נמצאו ${valid.length} רשומות משמעת</b><div class="tablewrap"><table><thead><tr><th>תלמיד</th><th>כיתה</th><th>מספר סוגי אירועים</th></tr></thead><tbody>${valid.slice(0,15).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.classId)}</td><td>${Object.keys(x.counts).length}</td></tr>`).join('')}</tbody></table></div><small>בדוק/י שמות וכיתות לפני אישור. הצגה של 15 הראשונים.</small>`;
  } else {
- let count=valid.reduce((n,x)=>n+x.entries.length,0);
- host.innerHTML=`<b>${valid.length} תלמידים, ${count} שיבוצים מזוהים</b><div class="warning">זיהוי המקצועות והמורים מתוך PDF הוא ניסיוני. יש לבדוק את התאמת המורה לכל מקצוע ולתקן טעויות לפני אישור. רשומה ללא מורה לא תהפוך לשיבוץ.</div><div class="tablewrap"><table><thead><tr><th>עמוד</th><th>תלמיד</th><th>כיתה</th><th>מקצועות ומורים שזוהו</th></tr></thead><tbody>${staged.slice(0,25).map(x=>`<tr><td>${x.page}</td><td>${esc(x.name||x.first||'זיהוי נכשל')}</td><td>${esc(x.classId||'')}</td><td>${(x.entries||[]).map(e=>`${esc(e.subject)} – ${esc(e.teacher)}`).join(' | ')}</td></tr>`).join('')}</tbody></table></div><small>מוצגות 25 רשומות ראשונות. יש לבדוק מדגם מכל הקבוצות ולוודא התאמה למקור לפני ייבוא.</small>`;
+ let count=valid.reduce((n,x)=>n+x.entries.length,0);const failed=staged.length-valid.length;const incomplete=valid.filter(x=>!x.entries.length).length;
+ host.innerHTML=`<b>${valid.length} מתוך ${staged.length} עמודים זוהו; ${count} שיבוצים מזוהים</b><p>${failed?'⚠️ '+failed+' עמודים ללא כותרת תקינה. ':''}${incomplete?'⚠️ '+incomplete+' תלמידים ללא שיבוצים מזוהים.':''}</p><div class="warning">זיהוי המקצועות והמורים מתוך PDF הוא ניסיוני. יש לבדוק את התאמת המורה לכל מקצוע ולתקן טעויות לפני אישור. רשומה ללא מורה לא תהפוך לשיבוץ.</div><div class="tablewrap"><table><thead><tr><th>עמוד</th><th>תלמיד</th><th>כיתה</th><th>מקצועות ומורים שזוהו</th></tr></thead><tbody>${staged.slice(0,25).map(x=>`<tr><td>${x.page}</td><td>${esc(x.name||x.first||'זיהוי נכשל')}</td><td>${esc(x.classId||'')}</td><td>${(x.entries||[]).map(e=>`${esc(e.subject)} – ${esc(e.teacher)}`).join(' | ')}</td></tr>`).join('')}</tbody></table></div><small>מוצגות 25 רשומות ראשונות. יש לבדוק מדגם מכל הקבוצות ולוודא התאמה למקור לפני ייבוא.</small>`;
  }
  status('הקובץ נקרא; הייבוא לא בוצע עדיין.');
 }
 async function commitChunks(operations){for(let i=0;i<operations.length;i+=350){const batch=writeBatch(db);for(let op of operations.slice(i,i+350)){batch.set(doc(db,op.col,op.id),op.data,{merge:op.merge??false})}await batch.commit();}}
-async function importConfirmed(){if(!staged.length)return;
+async function importConfirmed(){if(!staged.length||!el('approveImportCheck')?.checked)return;
  if(!confirm(`לייבא ${staged.length} רשומות? הפעולה תעדכן מידע קיים עם אותם מזהים. יש לוודא שהנתונים מדויקים.`))return;
  el('confirmImport').disabled=true;
  try{
