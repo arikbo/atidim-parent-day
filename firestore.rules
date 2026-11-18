@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signedIn(){return request.auth != null;}
+  function myProfile(){return get(/databases/$(database)/documents/profiles/$(request.auth.uid));}
+  function approved(){return signedIn() && myProfile().data.status == 'approved';}
+  function teacherId(){return myProfile().data.teacherId;}
+  function role(){return myProfile().data.role;}
+  function isAdmin(){return approved() && role() == 'admin';}
+  function isCoordinator(g){return approved() && (role() == 'admin' || (role() == 'coordinator' && g in myProfile().data.grades));}
+  function classAccess(c,g){return c.matches('^'+g+'.*') && (isCoordinator(g) || (approved() && role() == 'homeroom' && c in myProfile().data.classes));}
+  function assignDoc(a){return get(/databases/$(database)/documents/assignments/$(a));}
+  function ownsAssignment(a){return approved() && assignDoc(a).data.teacherId == teacherId();}
+
+  match /profiles/{uid} {
+   allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+   allow list: if isAdmin();
+   allow create: if signedIn() && uid == request.auth.uid
+     && request.resource.data.keys().hasOnly(['email','displayName','requestedTeacherName','status','createdAt'])
+     && request.resource.data.status == 'pending'
+     && request.resource.data.email == request.auth.token.email
+     && request.resource.data.createdAt == request.time;
+   // Never allow a teacher to change their own role, teacherId or status.
+   allow update,delete: if isAdmin();
+  }
+  match /teacherCatalog/{id} {
+   allow read: if signedIn(); // only names, no student information
+   allow write: if isAdmin();
+  }
+  match /students/{sid} {
+   allow read: if approved() && (isAdmin() || teacherId() in resource.data.teacherIds || classAccess(resource.data.classId,resource.data.grade));
+   allow write: if isAdmin();
+  }
+  match /assignments/{aid} {
+   allow read: if approved() && (isAdmin() || resource.data.teacherId == teacherId() || classAccess(resource.data.classId,resource.data.grade));
+   allow write: if isAdmin();
+  }
+  match /assessments/{aid} {
+   allow read: if approved() && (isAdmin() || ownsAssignment(aid) || classAccess(resource.data.classId,resource.data.grade));
+   allow create,update: if approved() && (
+     isAdmin() || (
+       ownsAssignment(aid) &&
+       request.resource.data.keys().hasOnly(['assignmentId','studentId','classId','grade','teacherId','subject','text','updatedAt','updatedBy']) &&
+       request.resource.data.assignmentId == aid &&
+       request.resource.data.studentId == assignDoc(aid).data.studentId &&
+       request.resource.data.classId == assignDoc(aid).data.classId &&
+       request.resource.data.grade == assignDoc(aid).data.grade &&
+       request.resource.data.subject == assignDoc(aid).data.subject &&
+       request.resource.data.teacherId == teacherId() &&
+       request.resource.data.updatedBy == request.auth.uid &&
+       request.resource.data.updatedAt == request.time &&
+       request.resource.data.text is string &&
+       request.resource.data.text.size() <= 650
+     ));
+   allow delete: if isAdmin();
+  }
+  match /discipline/{sid} {
+   allow read: if approved() && (isAdmin() || classAccess(resource.data.classId,resource.data.grade));
+   allow write: if isAdmin();
+  }
+  match /supports/{sid} {
+   allow read: if approved() && (isAdmin() || classAccess(resource.data.classId,resource.data.grade));
+   allow write: if isAdmin();
+  }
+  match /visibility/{classId} {
+   allow read: if approved() && (isAdmin() || classAccess(resource.data.classId,resource.data.grade));
+   allow write: if approved() && (isAdmin() || classAccess(request.resource.data.classId,request.resource.data.grade))
+      && request.resource.data.classId == classId
+      && request.resource.data.keys().hasOnly(['classId','grade','subjects','updatedAt','updatedBy']);
+  }
+  match /overrides/{sid} {
+   allow read: if approved() && (isAdmin() || classAccess(resource.data.classId,resource.data.grade));
+   allow write: if approved() && (isAdmin() || classAccess(request.resource.data.classId,request.resource.data.grade))
+       && request.resource.data.studentId == sid
+       && request.resource.data.keys().hasOnly(['studentId','classId','grade','subjects','updatedAt','updatedBy']);
+  }
+  match /{document=**} {allow read,write: if false;}
+ }
+}
