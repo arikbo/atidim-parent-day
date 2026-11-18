@@ -158,7 +158,7 @@ function parseTimetableText(txt){
  const gradeDigitAtEnd=after.match(/[()\s]*(\d{1,2})\s*['׳״"()\s]*$/);
  const grade=gradeAfter?.[1]||gradeLetterAtEnd?.[1];
  const number=gradeAfter?.[2]||gradeDigitAtEnd?.[1]||gradeBefore?.[1];
- const namePart=after.split(/[()\s]*[זחט]\s*['׳״"()\s]*\d{0,2}/)[0];
+ const namePart=after.replace(/\s*[()]\s*[זחט]\s*['׳״"()\s]*\d{0,2}\s*[()]*$/,'').replace(/\s+[זחט]\s*['׳״"()\s]*\d{1,2}\s*[()]*$/,'');
  const name=cleanedName(namePart),cl=grade&&number?grade+number:'';
  if(!name||!cl)return {error:'כותרת תלמיד זוהתה אך שם/כיתה לא פוענחו',first};
  const entries=[],supports=[];
