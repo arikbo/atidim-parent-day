@@ -146,10 +146,22 @@ const SUPPORTS=['שילוב','קשת','פרטני','תגבור','ממריאות'
 function parseTimetableText(txt){
  const lines=txt.split(/\n/).map(x=>x.trim()).filter(Boolean);
  const first=lines.find(x=>x.includes('מערכת שעות לתלמיד'))||'';
- const a=first.match(/מערכת שעות לתלמיד\/ה\s*:?\s*(.+?)\s*\)?\s*\(?([זחט])['׳\s]*(\d+)\)?/);
- const reversed=first.match(/^[\s(]*(\d+)\s*['׳]?\s*מערכת שעות לתלמיד\/ה\s*:\s*(.*?)\s*\)?([זחט])\s*$/);
- if(!a&&!reversed)return {error:'לא זוהתה כותרת תלמיד בעמוד',first};
- const name=cleanedName(a?a[1]:reversed[2]),cl=a?(a[2]+a[3]):(reversed[3]+reversed[1]),entries=[],supports=[];
+ // Smart timetable PDFs often extract RTL punctuation in visual order:
+ // e.g. "(5 'מערכת שעות לתלמיד/ה: NAME )ז" instead of "NAME (ז' 5)".
+ const flat=first.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,'').replace(/\s+/g,' ').trim();
+ const title=flat.match(/מערכת\s*שעות\s*לתלמיד\s*\/\s*ה\s*:?\s*(.*)/);
+ if(!title)return {error:'כותרת מערכת אישית לא נמצאה',first};
+ const after=title[1];
+ const gradeAfter=after.match(/[()\s]*([זחט])\s*['׳״"()\s]*(\d{1,2})/);
+ const gradeLetterAtEnd=after.match(/[()\s]*([זחט])\s*[()\s]*$/);
+ const gradeBefore=flat.split('מערכת')[0].match(/(?:^|[('׳"\s])(\d{1,2})\s*['׳"()\s]*$/);
+ const gradeDigitAtEnd=after.match(/[()\s]*(\d{1,2})\s*['׳״"()\s]*$/);
+ const grade=gradeAfter?.[1]||gradeLetterAtEnd?.[1];
+ const number=gradeAfter?.[2]||gradeDigitAtEnd?.[1]||gradeBefore?.[1];
+ const namePart=after.split(/[()\s]*[זחט]\s*['׳״"()\s]*\d{0,2}/)[0];
+ const name=cleanedName(namePart),cl=grade&&number?grade+number:'';
+ if(!name||!cl)return {error:'כותרת תלמיד זוהתה אך שם/כיתה לא פוענחו',first};
+ const entries=[],supports=[];
  for(let i=0;i<lines.length;i++){
   const raw=lines[i];const subject=SUBJECTS.find(s=>raw===s||raw.startsWith(s+' ')||raw.startsWith(s+'('));if(!subject)continue;
   const subj=subjectNormalize(subject).replace('תנ``ך','תנ״ך');
@@ -171,7 +183,7 @@ async function parsePdf(file){if(!file)throw Error('יש לבחור קובץ PDF
  let result=parseTimetableText(lines.join('\n'));
  if(result.error){result=parseTimetableText(c.items.map(i=>i.str).join('\n'))}
  out.push({...result,page:n});}
- if(!out.some(x=>x.id))throw Error('לא ניתן לפענח את כותרות התלמידים ב-PDF. נדרשת בדיקת פורמט.');return out;
+ if(!out.some(x=>x.id)){const example=out[0]?.first||'ללא כותרת';throw Error('לא זוהו שמות וכיתות מתוך ה-PDF. דוגמת כותרת: '+example.slice(0,120));}return out;
 }
 function previewImport(){const host=el('importView');let valid=staged.filter(x=>x.id&&!x.error);el('confirmImport').disabled=!valid.length;
  if(stagedType==='discipline'){
