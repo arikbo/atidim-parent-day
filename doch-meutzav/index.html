@@ -27,10 +27,23 @@ body{margin:0;font-family:'Heebo',Arial,sans-serif;color:var(--ink);background:v
 .drop span{color:var(--mut);font-size:14px}
 .priv{font-size:13px;color:var(--mut);margin-top:8px}
 .vars{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.var{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;gap:9px;align-items:flex-start}
+.var{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:8px}
+.vh{display:flex;gap:9px;align-items:flex-start}
+.thumb{position:relative;height:250px;overflow:hidden;border:1px solid #ddd;border-radius:6px;background:#eee;display:flex;justify-content:center;cursor:zoom-in}
+.thumb .page{position:absolute;top:2px;left:50%;margin-left:-105mm;transform:scale(.215);transform-origin:50% 0;box-shadow:0 0 0 4px #ccc}
+.thumb .zoom{position:absolute;bottom:6px;left:6px;background:rgba(255,255,255,.95);border:1px solid #bbb;border-radius:6px;font-size:13px;padding:3px 8px}
+.thumbnote{font-size:12px;color:var(--mut);margin-top:8px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:50;overflow:auto;padding:20px}
+#modal.on{display:block}
+#modal .mbar{position:sticky;top:0;display:flex;gap:10px;justify-content:center;align-items:center;margin-bottom:14px;z-index:2}
+#modal .mbar span{color:#fff;font-size:16px;font-weight:700}
+#modal .mpages{display:flex;flex-direction:column;align-items:center;gap:16px}
+#modal .page{zoom:.85;box-shadow:0 2px 12px rgba(0,0,0,.4)}
+@media (max-width:900px){#modal .page{zoom:.45}}
 .var input{margin-top:4px}
+@media (max-width:800px){.vars{grid-template-columns:1fr}}
 .var.on{border-color:var(--acc);background:#f2f7fc}
-.var b{display:block;font-size:15px}.var span{font-size:13px;color:var(--mut)}
+.vh b{display:block;font-size:15px}.vh span{font-size:13px;color:var(--mut)}
 .row{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
 .sw{display:flex;gap:8px;align-items:center;font-size:15px}
 .btns{display:flex;gap:10px;flex-wrap:wrap}
@@ -92,7 +105,7 @@ select{font-family:inherit;font-size:15px;padding:6px 8px;border-radius:8px;bord
   .app{max-width:none;padding:0}
   #pages{display:block;padding:0}
   #pages .page{zoom:1;box-shadow:none;page-break-after:always;break-after:page}
-  #stage,#exp{display:none}
+  #stage,#exp,#modal{display:none!important}
 }
 </style>
 </head>
@@ -114,10 +127,11 @@ select{font-family:inherit;font-size:15px;padding:6px 8px;border-radius:8px;bord
   <div class="card">
     <h2>2. עיצוב והדפסה</h2>
     <div class="vars" id="vars">
-      <label class="var on"><input type="radio" name="v" value="1" checked><div><b>שורת סיכום בראש</b><span>שורה דקה עם סך כל האירועים מתחת לכותרת</span></div></label>
-      <label class="var"><input type="radio" name="v" value="2"><div><b>אריחי סיכום בראש</b><span>אריח לכל סוג אירוע, צל"ש מודגש</span></div></label>
-      <label class="var"><input type="radio" name="v" value="3"><div><b>שורת סה"כ בטבלה</b><span>שורה אחרונה בטבלה שמסכמת את האירועים</span></div></label>
+      <label class="var on"><div class="vh"><input type="radio" name="v" value="1" checked><div><b>שורת סיכום בראש</b><span>שורה דקה עם סך כל האירועים מתחת לכותרת</span></div></div><div class="thumb" data-v="1" title="לחצו להגדלה"></div></label>
+      <label class="var"><div class="vh"><input type="radio" name="v" value="2"><div><b>אריחי סיכום בראש</b><span>אריח לכל סוג אירוע, צל"ש מודגש</span></div></div><div class="thumb" data-v="2" title="לחצו להגדלה"></div></label>
+      <label class="var"><div class="vh"><input type="radio" name="v" value="3"><div><b>שורת סה"כ בטבלה</b><span>שורה אחרונה בטבלה שמסכמת את האירועים</span></div></div><div class="thumb" data-v="3" title="לחצו להגדלה"></div></label>
     </div>
+    <div class="thumbnote" id="thumbNote">הדוגמה מראה תלמיד בדוי. אחרי העלאת קבצים היא תציג את התלמיד הראשון מהקבצים. לחצו על דוגמה כדי להגדיל.</div>
     <div id="hrBox" style="margin-top:12px"></div>
     <div class="row" style="margin-top:12px">
       <label class="sw"><input type="checkbox" id="duplex" checked> הדפסה דו־צדדית</label>
@@ -146,6 +160,7 @@ select{font-family:inherit;font-size:15px;padding:6px 8px;border-radius:8px;bord
     <div id="pages"><div class="empty">עדיין לא הועלו קבצים</div></div>
   </div>
 </div>
+<div id="modal"><div class="mbar"><span id="mTitle"></span><button id="mPick" class="pri">לבחור בעיצוב הזה</button><button id="mClose">סגירה ✕</button></div><div class="mpages" id="mPages"></div></div>
 <div id="stage"></div>
 <div id="exp"></div>
 
@@ -811,6 +826,7 @@ function refreshStu() {
 function render() {
   const v = variant(), duplex = $('duplex').checked;
   const list = filtered();
+  renderThumbs();
   const box = $('pages');
   box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<div class="empty">' + (FILES.length ? 'אין תלמידים בבחירה הזו' : 'עדיין לא הועלו קבצים') + '</div>'; updateButtons(); return; }
@@ -936,6 +952,52 @@ if (window.claude && typeof window.claude.use === 'function') {
   window.claude.use('downloads').then(ns => { DL = ns; }).catch(() => {});
 }
 
+
+// ---------------- thumbnails of the three versions ----------------
+const SAMPLE = { name: 'לוי נועה', id: '123456789', cls: "ז' 5", year: 'תשפ"ז', school: SCHOOL_DEFAULT, homeroom: 'פרץ הדס', file: '', key: 'sample',
+  legal: ['מכיל מידע מוגן על פי חוק הגנת הפרטיות – המוסרו שלא כדין עובר עבירה', 'הדוח הופק ל"לוי נועה" בתאריך: 25/11/2026 18:14'],
+  subjects: [
+    { subj: 'אנגלית', teacher: 'שגיא דניאל', grades: [{ task: 'מבחן 1', weight: '20', score: '74' }, { task: 'בוחן שכבתי באנגלית', weight: '10', score: '82' }], events: [], comment: 'נועה, את משתתפת בשיעור ולא מוותרת גם כשקשה. ניכר שיפור בהבנת הנקרא מתחילת השנה. כדאי לחזור על אוצר המילים כל שבוע.' },
+    { subj: 'חינוך', teacher: 'פרץ הדס', grades: [], events: [], comment: 'נועה יקרה, את חברה טובה ותורמת לאווירה נעימה בכיתה. את לוקחת אחריות ומתנדבת כשצריך.' },
+    { subj: 'חנ"ג', teacher: 'ברק עידו', grades: [], events: [{ name: 'חיסור', n: 2 }, { name: 'אין תלבושת', n: 1 }], comment: 'את משתתפת במרץ ומעודדת את חברות הקבוצה. הקפידי להגיע עם תלבושת מלאה ובזמן.' },
+    { subj: 'כישורי חיים', teacher: 'סעדה ליאת', grades: [], events: [], comment: 'את מקשיבה לאחרים ברגישות ומשתפת בפתיחות. התרומה שלך לשיח בכיתה משמעותית.' },
+    { subj: 'מדעים', teacher: 'חזן מירב', grades: [{ task: 'משימת כיתה מסה ונפח', weight: '1', score: null }, { task: 'נפח וגלים', weight: '10', score: '11' }, { task: 'דף עבודה נפח ומסה', weight: '15', score: '90' }], events: [{ name: 'צל"ש', n: 1 }], comment: 'את עובדת בצורה מסודרת ויסודית במעבדה, והעבודות שהגשת מושקעות מאוד. המשיכי כך!' },
+    { subj: 'מתמטיקה', teacher: 'שמש יואב', grades: [{ task: 'מבחן מספרים מכוונים', weight: '25', score: '68' }, { task: 'בוחן חיבור מספרים מכוונים', weight: '5', score: '88' }], events: [{ name: 'חיסור', n: 2 }], comment: 'רואים את ההשתדלות שלך וההשקעה במקצוע, וזו הדרך להצלחה. כדי להתקדם עוד, הקפידי לתרגל בבית.' },
+    { subj: 'עברית', teacher: 'נחום שירה', grades: [{ task: 'בוחן מאזכרים', weight: '10', score: '58' }, { task: 'מבחן עברית שכבתי', weight: '25', score: '81' }, { task: 'תיקון מבחן', weight: '5', score: null }], events: [{ name: 'צל"ש', n: 2 }, { name: 'חיסור', n: 3 }, { name: 'אי הכנת שיעורי בית', n: 3 }, { name: 'הפרעה', n: 1 }], comment: 'את כותבת בצורה מסודרת ומשתתפת בשיעור. כדי להצליח עוד יותר, חשוב להכין שיעורי בית באופן קבוע.' },
+    { subj: 'תנ"ך', teacher: 'גבאי אלי', grades: [{ task: 'שמואל א פרק ב', weight: '10', score: '92' }], events: [{ name: 'צל"ש', n: 1 }], comment: 'את מבינה היטב את הסיפורים ויודעת לקשר אותם לחיים שלנו. העבודה שלך על פרק ב הייתה מצוינת.' },
+  ] };
+const VNAMES = { 1: 'שורת סיכום בראש', 2: 'אריחי סיכום בראש', 3: 'שורת סה"כ בטבלה' };
+function thumbStudent() {
+  const sel = $('stu').value && allStudents().find(x => x.key === $('stu').value);
+  return sel || filtered()[0] || allStudents()[0] || SAMPLE;
+}
+function renderThumbs() {
+  const st = thumbStudent(), duplex = $('duplex').checked;
+  document.querySelectorAll('.thumb').forEach(t => {
+    const r = buildStudent(st, +t.dataset.v, duplex);
+    t.innerHTML = '';
+    t.appendChild(r.pages[0]);
+    t.insertAdjacentHTML('beforeend', `<span class="zoom">🔍 הגדלה${r.contentPages > 1 ? ' · ' + r.contentPages + ' עמודי תוכן' : ''}</span>`);
+  });
+  $('thumbNote').textContent = st === SAMPLE
+    ? 'הדוגמה מראה תלמידה בדויה. אחרי העלאת קבצים יוצג התלמיד הראשון מהקבצים (או התלמיד שבחרתם בהורדה). לחצו על דוגמה כדי להגדיל.'
+    : `הדוגמאות מראות את הדוח של ${st.name} (${st.cls}). לבחירת תלמיד אחר: בחלק "הורדה". לחצו על דוגמה כדי להגדיל.`;
+}
+let mV = 1;
+function openModal(v) {
+  mV = v;
+  const st = thumbStudent(), r = buildStudent(st, v, $('duplex').checked);
+  $('mTitle').textContent = `${VNAMES[v]} · ${st.name}`;
+  $('mPages').innerHTML = ''; r.pages.forEach(p => $('mPages').appendChild(p));
+  $('modal').classList.add('on'); $('modal').scrollTop = 0;
+}
+const closeModal = () => { $('modal').classList.remove('on'); $('mPages').innerHTML = ''; };
+document.querySelectorAll('.thumb').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); openModal(+t.dataset.v); }));
+$('mClose').onclick = closeModal;
+$('modal').addEventListener('click', e => { if (e.target.id === 'modal' || e.target.id === 'mPages') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+$('mPick').onclick = () => { const r = document.querySelector(`input[name=v][value="${mV}"]`); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); closeModal(); };
+
 // ---------------- wiring ----------------
 $('drop').onclick = () => $('file').click();
 $('file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
@@ -950,7 +1012,8 @@ $('bPrint').onclick = () => window.print();
 $('bZipFile').onclick = () => exportZip('file');
 $('bOne').onclick = () => exportZip('one');
 $('bZipStu').onclick = () => exportZip('student');
-document.fonts && document.fonts.ready.then(() => { if (FILES.length) render(); });
+document.fonts && document.fonts.ready.then(() => render());
+render();
 </script>
 </body>
 </html>
