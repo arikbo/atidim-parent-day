@@ -626,6 +626,30 @@ function parseEvent(line) {
   return m ? { name: clean(m[1]), n: +m[2] } : null;
 }
 
+
+const PD_RE = /^\*?\s*יום הורים\s*:?\s*(.*)$/;
+const PD_ANY = /\*?\s*יום הורים\s*:?\s*(.*)$/;
+// Pull a "יום הורים:" comment out of a list of cell lines. Lines after it that do not look
+// like a regular item of that cell (isItem) are taken as the comment's continuation.
+const stripCount = t => t.replace(/\s*:\s*\d+\s*$/, '');            // "...: 1" → never print the count of a comment
+// An "event" whose name is really a teacher's sentence (long text) is a comment that landed in the events cell
+const looksLikeComment = name => /^יום הורים/.test(name) || name.length > 40 || (/[.,!?]/.test(name) && name.split(' ').length > 5);
+const KNOWN_EV = /^(חיסור|איחור|הפרעה|צל"ש|אין תלבושת|אי הכנת|אי הבאת|שימוש ב|אינו\/אינה|הוצאה|הרחקה)/;
+const isEventLine = raw => !!parseEvent(raw) && (/^\*/.test(raw) || KNOWN_EV.test(parseEvent(raw).name));
+function takeComment(ls, isItem, evAsComment) {
+  const rest = []; let comment = ''; let inC = false;
+  for (const raw of ls) {
+    const l = raw.replace(/^\*+\s*/, '');
+    const m = l.match(PD_RE);
+    if (m) { inC = true; comment += (comment ? ' ' : '') + stripCount(m[1]); continue; }
+    const ev = evAsComment && parseEvent(raw);
+    if (ev && looksLikeComment(ev.name)) { inC = true; comment += (comment ? ' ' : '') + ev.name; continue; }
+    if (inC && !isItem(raw)) { comment += ' ' + stripCount(l); continue; }
+    inC = false; rest.push(raw);
+  }
+  return { rest, comment: clean(comment) };
+}
+
 // ---------------- docx parsing ----------------
 async function parseDocx(file) {
   const zip = await JSZip.loadAsync(file);
@@ -651,22 +675,43 @@ async function parseDocx(file) {
       }
       for (const r of rows) {
         const cells = kids(r, 'tc');
+        const last = cur.subjects[cur.subjects.length - 1];
+        const addComment = (subj, text) => { text = clean(text); if (subj && text) subj.comment = (subj.comment ? subj.comment + ' ' : '') + text; };
         if (cells.length === 1) {
           const t = clean(nodeText(cells[0]).replace(/\n/g, ' '));
-          const cm = t.match(/^יום הורים\s*:\s*(.*)$/);
-          const last = cur.subjects[cur.subjects.length - 1];
-          if (last && t) last.comment = (last.comment ? last.comment + ' ' : '') + (cm ? cm[1] : t);
+          const cm = t.match(PD_RE);
+          addComment(last, stripCount(cm ? cm[1] : t));
           continue;
         }
-        if (cells.length < 3) continue;
+        if (cells.length < 3) {
+          // a comment row split into 2 cells: "יום הורים:" | text
+          const t = clean(cells.map(c => nodeText(c).replace(/\n/g, ' ')).join(' '));
+          const cm = t.match(PD_RE); if (cm) addComment(last, stripCount(cm[1]));
+          continue;
+        }
         const c0 = lines(cells[0]);
-        if (!c0.length || c0[0] === 'מקצוע') continue;
+        const restText = clean(cells.slice(1).map(c => nodeText(c).replace(/\n/g, ' ')).join(' '));
+        if (!c0.length) {
+          // row with an empty subject cell: a comment that landed in one of the other cells
+          const cm = restText.match(PD_ANY);
+          if (cm) addComment(last, stripCount(cm[1]));
+          else if (restText && last) last.unknown.push(restText);
+          continue;
+        }
+        if (c0[0] === 'מקצוע') continue;
         let subj = c0[0], teacher = '';
         for (const l of c0.slice(1)) { const tm = l.match(/^שם המורה:\s*(.*)$/); if (tm) teacher = tm[1]; }
         if (!teacher) { const tm = subj.match(/^(.*?)שם המורה:\s*(.*)$/); if (tm) { subj = tm[1].trim(); teacher = tm[2]; } }
-        const grades = lines(cells[1]).map(parseGrade);
-        const events = lines(cells[2]).map(parseEvent).filter(Boolean);
-        cur.subjects.push({ subj, teacher, grades, events, comment: '' });
+        const rec = { subj, teacher, grades: [], events: [], comment: '', unknown: [] };
+        // grades cell: a "יום הורים:" line (and what follows it) is the comment, not a grade
+        const g = takeComment(lines(cells[1]), l => / - \*/.test(l));
+        rec.grades = g.rest.map(parseGrade);
+        addComment(rec, g.comment);
+        // events cell: same; any line that is not "event: number" after the comment belongs to it
+        const e = takeComment(lines(cells[2]), isEventLine, true);
+        e.rest.forEach(l => { const ev = parseEvent(l); if (ev) rec.events.push(ev); else rec.unknown.push(l); });
+        addComment(rec, e.comment);
+        cur.subjects.push(rec);
       }
     }
   }
@@ -853,6 +898,8 @@ function renderWarnings(list, long, duplex) {
   const errs = FILES.filter(f => f.error);
   if (errs.length) h += `<div class="warn err"><b>קבצים שלא נקראו:</b><ul>${errs.map(f => `<li>${esc(f.name)}: ${esc(f.error)}</li>`).join('')}</ul></div>`;
   if (long.length) h += `<div class="warn"><b>${duplex ? 'צריכים גיליון נוסף (יותר משני עמודים):' : 'הדוח לא נכנס בעמוד אחד:'}</b><ul>${long.map(s => `<li>${esc(s.name)} (${esc(s.cls)})</li>`).join('')}</ul></div>`;
+  const unk = all.filter(s => s.subjects.some(x => x.unknown && x.unknown.length));
+  if (unk.length) h += `<div class="warn"><b>שורות שהאתר לא זיהה (לא הודפסו, כדאי לבדוק בדוח המקורי):</b><ul>${unk.slice(0, 20).map(s => `<li>${esc(s.name)} (${esc(s.cls)}): ${s.subjects.filter(x => x.unknown && x.unknown.length).map(x => esc(x.subj) + ': "' + esc(x.unknown.join(' / ')) + '"').join('; ')}</li>`).join('')}</ul></div>`;
   const noCom = all.filter(s => s.subjects.some(x => !x.comment));
   if (noCom.length) h += `<div class="warn"><b>מקצועות בלי הערת יום הורים:</b><ul>${noCom.slice(0, 30).map(s => `<li>${esc(s.name)} (${esc(s.cls)}): ${s.subjects.filter(x => !x.comment).map(x => esc(x.subj)).join(', ')}</li>`).join('')}${noCom.length > 30 ? `<li>ועוד ${noCom.length - 30}...</li>` : ''}</ul></div>`;
   box.innerHTML = h;
