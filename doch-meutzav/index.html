@@ -838,7 +838,7 @@ let HR_CLS = {};     // per-class choice: {name, word}
 try { HR_CLS = JSON.parse(localStorage.getItem('hrCls') || '{}') || {}; } catch (e) {}
 const saveHr = () => { try { localStorage.setItem('hrCls', JSON.stringify(HR_CLS)); } catch (e) {} };
 function guessHr(name) {
-  if (/[,،]/.test(name)) return '';
+  if (/[,،]| ו/.test(name)) return 'מחנכי';
   const w = name.trim().split(/\s+/).slice(1);            // surname first: the rest are first names
   let f = 0, m = 0;
   w.forEach(x => { if (FEM.has(x)) f++; if (MASC.has(x)) m++; });
@@ -850,8 +850,11 @@ function classAuto(cls) {
   const doc = sts.find(s => s.hrDoc);
   if (doc) return { name: doc.hrDoc, word: /ת$/.test(doc.hrDocWord) ? 'מחנכת' : doc.hrDocWord === 'מחנך' ? 'מחנך' : '' };
   const cnt = {}; sts.forEach(s => { if (s.hrAuto) cnt[s.hrAuto] = (cnt[s.hrAuto] || 0) + 1; });
-  const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
-  return { name: best ? best[0] : '', word: '' };
+  const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]);
+  if (!top.length) return { name: '', word: '' };
+  // two "חינוך" teachers that each cover a real part of the class = two homeroom teachers
+  if (top[1] && top[1][1] >= sts.length * 0.25) return { name: top[0][0] + ', ' + top[1][0], word: 'מחנכי' };
+  return { name: top[0][0], word: '' };
 }
 function homeroomOf(st) {
   if (st === SAMPLE) return { name: st.homeroom, word: 'מחנכת' };
@@ -863,12 +866,12 @@ function renderHrBox() {
   const classes = [...new Set(allStudents().map(s => s.cls))].sort((a, b) => a.localeCompare(b, 'he'));
   const box = $('hrBox');
   if (!classes.length) { box.innerHTML = ''; return; }
-  box.innerHTML = '<div class="hint" style="margin-bottom:6px">המחנך/ת של כל כיתה. אם בדוח אין שורת "מחנך/ת", לקחתי את המורה של "חינוך". אפשר לתקן את השם ולבחור מחנך או מחנכת:</div><div class="hr">' +
+  box.innerHTML = '<div class="hint" style="margin-bottom:6px">המחנך/ת של כל כיתה. אם בדוח אין שורת "מחנך/ת", לקחתי את המורה של "חינוך". אפשר לתקן את השם (לשני מחנכים: שני שמות עם פסיק ביניהם) ולבחור מחנך, מחנכת או שני מחנכים:</div><div class="hr">' +
     classes.map((c, i) => {
       const h = homeroomOf(allStudents().find(s => s.cls === c));
       const word = (HR_CLS[c] || {}).word || classAuto(c).word || guessHr(h.name) || '';
       return `<label><b>${esc(c)}</b><input data-c="${i}" class="hrn" value="${esc(h.name)}" style="width:170px;font-family:inherit;font-size:14px;padding:4px 6px;border:1px solid #aaa;border-radius:6px"><select data-c="${i}" class="hrw">` +
-        ['', 'מחנך', 'מחנכת'].map(o => `<option value="${o}"${o === word ? ' selected' : ''}>${o || 'מחנך/ת'}</option>`).join('') +
+        ['', 'מחנך', 'מחנכת', 'מחנכי'].map(o => `<option value="${o}"${o === word ? ' selected' : ''}>${o === 'מחנכי' ? 'שני מחנכים (מחנכי הכיתה)' : (o || 'מחנך/ת')}</option>`).join('') +
         `</select>${word ? '' : '<span class="q">?</span>'}</label>`;
     }).join('') + '</div>';
   box.querySelectorAll('.hrn').forEach(inp => inp.onchange = () => { const c = classes[+inp.dataset.c]; HR_CLS[c] = Object.assign({}, HR_CLS[c], { name: inp.value.trim() }); saveHr(); renderHrBox(); render(); });
