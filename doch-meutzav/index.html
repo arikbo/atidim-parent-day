@@ -86,7 +86,7 @@ select{font-family:inherit;font-size:15px;padding:6px 8px;border-radius:8px;bord
 .tD th{background:#e6e6e6;font-size:9pt;padding:1mm;border:.6pt solid #777}
 .tD td{border:.6pt solid #777;padding:1.5mm 2mm;vertical-align:top}
 .tD tr{break-inside:avoid}
-.tS{width:24mm}.tS b{font-size:10pt}.tS div{font-size:8.2pt;color:#555}
+.tS{width:24mm}.tS .wg{color:#111!important;font-size:8.6pt!important;margin-top:.8mm}.tS b{font-size:10pt}.tS div{font-size:8.2pt;color:#555}
 .tC .cm{font-family:'Frank Ruhl Libre',serif;font-size:10.6pt;line-height:1.45}
 .tG{width:52mm}.tE{width:26mm;font-size:8.3pt;line-height:1.45}
 .gl{display:flex;justify-content:space-between;gap:2mm;font-size:8.2pt;line-height:1.35;margin-bottom:.6mm}
@@ -612,7 +612,16 @@ const kids = (el, name) => Array.from(el.childNodes).filter(c => c.nodeType === 
 
 function parseGrade(line) {
   const i = line.lastIndexOf(' - *');
-  if (i < 0) return { task: line, type: '', weight: '', score: null };
+  if (i < 0) {                                   // short format: "בוחן 1 (15%) ציון: 100"
+    const m2 = line.match(/^(.*?)\s*\(([^()]*%[^()]*)\)\s*(?:ציון:\s*(.*))?$/);
+    if (m2) {
+      const w = (m2[2].match(/(\d+(?:\.\d+)?)\s*%(?!.*\d\s*%)/) || [])[1] || '';
+      return { task: m2[1].trim(), type: '', weight: w, score: m2[3] != null && m2[3].trim() !== '' ? m2[3].trim() : null };
+    }
+    const m3 = line.match(/^(.*?)\s*ציון:\s*(.*)$/);
+    if (m3) return { task: m3[1].trim(), type: '', weight: '', score: m3[2].trim() || null };
+    return { task: line, type: '', weight: '', score: null };
+  }
   const task = line.slice(0, i).trim(), rest = line.slice(i + 4);
   const m = rest.match(/^([^()]*?)\s*\((.*)\)\s*(?:ציון:\s*(.*))?$/);
   if (!m) return { task, type: rest.trim(), weight: '', score: null };
@@ -634,7 +643,7 @@ const PD_ANY = /\*?\s*יום הורים\s*:?\s*(.*)$/;
 const stripCount = t => t.replace(/\s*:\s*\d+\s*$/, '');            // "...: 1" → never print the count of a comment
 // An "event" whose name is really a teacher's sentence (long text) is a comment that landed in the events cell
 const looksLikeComment = name => /^יום הורים/.test(name) || name.length > 40 || (/[.,!?]/.test(name) && name.split(' ').length > 5);
-const KNOWN_EV = /^(חיסור|איחור|הפרעה|צל"ש|אין תלבושת|אי הכנת|אי הבאת|שימוש ב|אינו\/אינה|הוצאה|הרחקה)/;
+const KNOWN_EV = /^(חיסור|איחור|הפרעה|צל"ש|אין תלבושת|אי הכנת|אי הבאת|חוסר ב|שימוש ב|אינו\/אינה|הוצאה|הרחקה)/;
 const isEventLine = raw => !!parseEvent(raw) && (/^\*/.test(raw) || KNOWN_EV.test(parseEvent(raw).name));
 function takeComment(ls, isItem, evAsComment) {
   const rest = []; let comment = ''; let inC = false;
@@ -664,6 +673,8 @@ async function parseDocx(file) {
       const t = clean(nodeText(el));
       if (!t) continue;
       const y = t.match(/שנת הלימודים\s*(\S+)/); if (y) year = y[1];
+      const hm = t.match(/^(מחנכ(?:ת|ים|ות)|מחנך)\s*:\s*(.+)$/);
+      if (hm && cur) { cur.hrDoc = hm[2].trim(); cur.hrDocWord = hm[1]; continue; }
       const m = t.match(/שם התלמיד(?:ה)?:\s*(.+?)\s+ת\.ז\.?\s*(\S+)\s+כיתה:\s*(.+)$/);
       if (m) { cur = { name: m[1].trim(), id: m[2], cls: m[3].trim().replace(/\s+/g, ' '), subjects: [], legal: [], year, school, file: file.name }; students.push(cur); }
     } else if (el.localName === 'tbl' && cur) {
@@ -700,12 +711,21 @@ async function parseDocx(file) {
         }
         if (c0[0] === 'מקצוע') continue;
         let subj = c0[0], teacher = '';
-        for (const l of c0.slice(1)) { const tm = l.match(/^שם המורה:\s*(.*)$/); if (tm) teacher = tm[1]; }
+        let weighted = '';
+        for (const l of c0.slice(1)) {
+          const tm = l.match(/^שם המורה:\s*(.*)$/); if (tm) teacher = tm[1];
+          const wm = l.match(/^ציון משוקלל:\s*(.*)$/); if (wm) weighted = wm[1].trim();
+        }
         if (!teacher) { const tm = subj.match(/^(.*?)שם המורה:\s*(.*)$/); if (tm) { subj = tm[1].trim(); teacher = tm[2]; } }
-        const rec = { subj, teacher, grades: [], events: [], comment: '', unknown: [] };
+        const rec = { subj, teacher, weighted, grades: [], events: [], comment: '', unknown: [] };
         // grades cell: a "יום הורים:" line (and what follows it) is the comment, not a grade
-        const g = takeComment(lines(cells[1]), l => / - \*/.test(l));
-        rec.grades = g.rest.map(parseGrade);
+        const g = takeComment(lines(cells[1]), l => / - \*|\([^()]*%[^()]*\)|ציון:/.test(l));
+        // a verbal assessment attached to a grade line ("... ציון: 94 הערכה מילולית: ...") is the teacher's comment
+        rec.grades = g.rest.map(l => {
+          const vm = l.match(/^(.*?)\s*הערכה מילולית\s*:\s*(.*)$/);
+          if (vm) { addComment(rec, vm[2]); l = vm[1]; }
+          return l ? parseGrade(l) : null;
+        }).filter(Boolean);
         addComment(rec, g.comment);
         // events cell: same; any line that is not "event: number" after the comment belongs to it
         const e = takeComment(lines(cells[2]), isEventLine, true);
@@ -715,14 +735,11 @@ async function parseDocx(file) {
       }
     }
   }
-  // homeroom teacher from "חינוך"
-  for (const s of students) {
-    const h = s.subjects.find(x => /^חינוך/.test(x.subj));
-    s.homeroom = h ? h.teacher : '';
+  // homeroom teacher: the report's own "מחנך/ת:" line, else the teacher of "חינוך"
+  for (const st of students) {
+    const h = st.subjects.find(x => /^חינוך/.test(x.subj));
+    st.hrAuto = st.hrDoc || (h ? h.teacher : '');
   }
-  const byCls = {};
-  students.forEach(s => { if (s.homeroom) (byCls[s.cls] = byCls[s.cls] || {})[s.homeroom] = 1; });
-  students.forEach(s => { if (!s.homeroom && byCls[s.cls]) s.homeroom = Object.keys(byCls[s.cls]).join(', '); });
   return students;
 }
 
@@ -735,7 +752,7 @@ function totals(st) {
 }
 function headerHTML(st) {
   return `<div class="lh"><img src="${LOGO_HOLON}"><div class="lhc"><div class="lhs">${esc(st.school)}${st.year ? ' · שנת הלימודים ' + esc(st.year) : ''}</div><div class="lht">דוח יום הורים</div>
-  <div class="lhst"><b>${iso(st.name)}</b> · ת.ז. ${iso(st.id)} · כיתה ${iso(st.cls)}</div>${st.homeroom ? `<div class="lhs2">${hrWord(st.homeroom)} הכיתה: ${iso(st.homeroom)}</div>` : ''}</div><img src="${LOGO_SCHOOL_SRC}"></div>`;
+  <div class="lhst"><b>${iso(st.name)}</b> · ת.ז. ${iso(st.id)} · כיתה ${iso(st.cls)}</div>${(() => { const h = homeroomOf(st); return h.name ? `<div class="lhs2">${h.word} הכיתה: ${iso(h.name)}</div>` : ''; })()}</div><img src="${LOGO_SCHOOL_SRC}"></div>`;
 }
 function contHTML(st) { return `<div class="ch"><span><b>${iso(st.name)}</b> · ת.ז. ${iso(st.id)} · כיתה ${iso(st.cls)}</span><span class="m">דוח יום הורים · המשך</span></div>`; }
 function summaryHTML(st, v) {
@@ -752,7 +769,7 @@ const THEAD = `<thead><tr><th>מקצוע</th><th>הערת יום הורים</th>
 function rowHTML(s) {
   const g = s.grades.map(x => `<div class="gl"><span class="gt">${esc(x.task)}${x.weight ? ` <span class="m">${esc(x.weight)}%</span>` : ''}</span>${x.score != null ? `<span class="scv">${esc(x.score)}</span>` : `<span class="scv na">—</span>`}</div>`).join('');
   const e = evSort(s.events).map(x => `<div class="${x.name === POS ? 'evpos' : ''}">${esc(x.name)} ${x.n}</div>`).join('');
-  return `<tr><td class="tS"><b>${esc(s.subj)}</b>${s.teacher ? `<div>${esc(s.teacher)}</div>` : ''}</td><td class="tC"><p class="cm">${esc(s.comment)}</p></td><td class="tG">${g}</td><td class="tE">${e}</td></tr>`;
+  return `<tr><td class="tS"><b>${esc(s.subj)}</b>${s.teacher ? `<div>${esc(s.teacher)}</div>` : ''}${s.weighted ? `<div class="wg">ציון משוקלל: <b>${esc(s.weighted)}</b></div>` : ''}</td><td class="tC"><p class="cm">${esc(s.comment)}</p></td><td class="tG">${g}</td><td class="tE">${e}</td></tr>`;
 }
 function totalRowHTML(st) {
   const t = totals(st);
@@ -817,35 +834,45 @@ function buildStudent(st, v, duplex) {
 // ---------------- homeroom teacher: מחנך / מחנכת ----------------
 const FEM = new Set('אביבה אביגיל אביטל אדווה אודליה אווה אופירה אורית אורלי אורנה אורנית אושרת אילנה אילנית איריס אירית אסנת אסתר אפרת אתי בתיה גאולה גילה גלית דבורה דבי דורית דליה דנה דפנה הגר הדס הדסה הילה הלן ורד זהבה זיוה חביבה חגית חוה חנה חני טלי טליה טובה טלילה טניה יהודית יולי יוליה יעל יעלי יפה יפית ירדנה ליאת לילך לימור לינוי לירז לאה מאיה מוריה מורן מזל מיכל מיטל מירב מירה מירי מלכה מרגלית מרים מריה מרינה נגה נוגה נועה נורית נטלי נטליה נטע ניצה נילי נעמה נעמי סיגל סיגלית סימה סיון סמדר עדנה עינב עינת ענבל ענבר עפרה עליזה פזית פנינה צביה ציפורה ציפי צילה קרן רבקה רונית רחל רינה רויטל רות רחלי רעות שולמית שושנה שושי שירה שירי שירלי שלומית שני שרה שרית שרון תמר תמי תהילה תקווה אלגרה אולגה אנה סבטלנה יבגניה ולנטינה אירנה מרגריטה ליודמילה טטיאנה'.split(' '));
 const MASC = new Set('אבי אברהם אהרון אורי אילן איתי איתן אלון אליהו אלי אליעזר אמיר אריאל אריק אשר בועז בני ברוך גבי גדי גיא גיל דוד דני דניאל דן הראל זאב חיים יאיר יגאל יהודה יואב יובל יונתן יוסי יוסף יעקב יצחק ירון ישראל כפיר לירן מאיר מוטי מיכאל משה נדב נועם ניר נתן עדי עמית עמרי עוזי צבי רועי רונן רמי רפאל שאול שגיא שלום שלמה שמואל שמעון שי תומר אלכסנדר ולדימיר סרגיי דמיטרי מקסים'.split(' '));
-const HR_PREF = {};
-try { Object.assign(HR_PREF, JSON.parse(localStorage.getItem('hrWord') || '{}')); } catch (e) {}
+let HR_CLS = {};     // per-class choice: {name, word}
+try { HR_CLS = JSON.parse(localStorage.getItem('hrCls') || '{}') || {}; } catch (e) {}
+const saveHr = () => { try { localStorage.setItem('hrCls', JSON.stringify(HR_CLS)); } catch (e) {} };
 function guessHr(name) {
-  const parts = name.split(/[,،]/).map(x => x.trim()).filter(Boolean);
-  if (parts.length > 1) return '';
+  if (/[,،]/.test(name)) return '';
   const w = name.trim().split(/\s+/).slice(1);            // surname first: the rest are first names
   let f = 0, m = 0;
   w.forEach(x => { if (FEM.has(x)) f++; if (MASC.has(x)) m++; });
   return f && !m ? 'מחנכת' : m && !f ? 'מחנך' : '';
 }
-function hrWord(name) { return HR_PREF[name] || guessHr(name) || 'מחנך/ת'; }
+// automatic homeroom per class: a "מחנך/ת:" line in the report wins; otherwise the most common "חינוך" teacher
+function classAuto(cls) {
+  const sts = allStudents().filter(s => s.cls === cls);
+  const doc = sts.find(s => s.hrDoc);
+  if (doc) return { name: doc.hrDoc, word: /ת$/.test(doc.hrDocWord) ? 'מחנכת' : doc.hrDocWord === 'מחנך' ? 'מחנך' : '' };
+  const cnt = {}; sts.forEach(s => { if (s.hrAuto) cnt[s.hrAuto] = (cnt[s.hrAuto] || 0) + 1; });
+  const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+  return { name: best ? best[0] : '', word: '' };
+}
+function homeroomOf(st) {
+  if (st === SAMPLE) return { name: st.homeroom, word: 'מחנכת' };
+  const a = classAuto(st.cls), o = HR_CLS[st.cls] || {};
+  const name = (o.name != null ? o.name : a.name) || '';
+  return { name, word: o.word || a.word || guessHr(name) || 'מחנך/ת' };
+}
 function renderHrBox() {
-  const names = [...new Set(allStudents().map(s => s.homeroom).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
+  const classes = [...new Set(allStudents().map(s => s.cls))].sort((a, b) => a.localeCompare(b, 'he'));
   const box = $('hrBox');
-  if (!names.length) { box.innerHTML = ''; return; }
-  const clsOf = n => [...new Set(allStudents().filter(s => s.homeroom === n).map(s => s.cls))].join(', ');
-  box.innerHTML = '<div class="hint" style="margin-bottom:6px">מחנך או מחנכת? זיהיתי לפי השם הפרטי. אם לא זוהה, או שזוהה לא נכון, בחרו כאן:</div><div class="hr">' +
-    names.map((n, i) => {
-      const cur = HR_PREF[n] || guessHr(n) || '';
-      return `<label>${esc(n)} <span class="m">(${esc(clsOf(n))})</span><select data-n="${i}">` +
-        ['', 'מחנך', 'מחנכת'].map(o => `<option value="${o}"${o === cur ? ' selected' : ''}>${o || 'מחנך/ת'}</option>`).join('') +
-        `</select>${cur ? '' : '<span class="q">?</span>'}</label>`;
+  if (!classes.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="hint" style="margin-bottom:6px">המחנך/ת של כל כיתה. אם בדוח אין שורת "מחנך/ת", לקחתי את המורה של "חינוך". אפשר לתקן את השם ולבחור מחנך או מחנכת:</div><div class="hr">' +
+    classes.map((c, i) => {
+      const h = homeroomOf(allStudents().find(s => s.cls === c));
+      const word = (HR_CLS[c] || {}).word || classAuto(c).word || guessHr(h.name) || '';
+      return `<label><b>${esc(c)}</b><input data-c="${i}" class="hrn" value="${esc(h.name)}" style="width:170px;font-family:inherit;font-size:14px;padding:4px 6px;border:1px solid #aaa;border-radius:6px"><select data-c="${i}" class="hrw">` +
+        ['', 'מחנך', 'מחנכת'].map(o => `<option value="${o}"${o === word ? ' selected' : ''}>${o || 'מחנך/ת'}</option>`).join('') +
+        `</select>${word ? '' : '<span class="q">?</span>'}</label>`;
     }).join('') + '</div>';
-  box.querySelectorAll('select').forEach(sel => sel.onchange = () => {
-    const n = names[+sel.dataset.n];
-    if (sel.value) HR_PREF[n] = sel.value; else delete HR_PREF[n];
-    try { localStorage.setItem('hrWord', JSON.stringify(HR_PREF)); } catch (e) {}
-    renderHrBox(); render();
-  });
+  box.querySelectorAll('.hrn').forEach(inp => inp.onchange = () => { const c = classes[+inp.dataset.c]; HR_CLS[c] = Object.assign({}, HR_CLS[c], { name: inp.value.trim() }); saveHr(); renderHrBox(); render(); });
+  box.querySelectorAll('.hrw').forEach(sel => sel.onchange = () => { const c = classes[+sel.dataset.c]; HR_CLS[c] = Object.assign({}, HR_CLS[c], { word: sel.value }); saveHr(); renderHrBox(); render(); });
 }
 
 // ---------------- UI state ----------------
@@ -901,7 +928,7 @@ function renderWarnings(list, long, duplex) {
   const unk = all.filter(s => s.subjects.some(x => x.unknown && x.unknown.length));
   if (unk.length) h += `<div class="warn"><b>שורות שהאתר לא זיהה (לא הודפסו, כדאי לבדוק בדוח המקורי):</b><ul>${unk.slice(0, 20).map(s => `<li>${esc(s.name)} (${esc(s.cls)}): ${s.subjects.filter(x => x.unknown && x.unknown.length).map(x => esc(x.subj) + ': "' + esc(x.unknown.join(' / ')) + '"').join('; ')}</li>`).join('')}</ul></div>`;
   const noCom = all.filter(s => s.subjects.some(x => !x.comment));
-  if (noCom.length) h += `<div class="warn"><b>מקצועות בלי הערת יום הורים:</b><ul>${noCom.slice(0, 30).map(s => `<li>${esc(s.name)} (${esc(s.cls)}): ${s.subjects.filter(x => !x.comment).map(x => esc(x.subj)).join(', ')}</li>`).join('')}${noCom.length > 30 ? `<li>ועוד ${noCom.length - 30}...</li>` : ''}</ul></div>`;
+  if (noCom.length) h += `<div class="warn"><details><summary><b>ל-${noCom.length} תלמידים יש מקצועות בלי הערת יום הורים</b> (לחצו לפירוט)</summary><ul>${noCom.slice(0, 30).map(s => `<li>${esc(s.name)} (${esc(s.cls)}): ${s.subjects.filter(x => !x.comment).map(x => esc(x.subj)).join(', ')}</li>`).join('')}${noCom.length > 30 ? `<li>ועוד ${noCom.length - 30}...</li>` : ''}</ul></details></div>`;
   box.innerHTML = h;
 }
 function updateButtons() {
